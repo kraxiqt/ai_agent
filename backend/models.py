@@ -1,8 +1,18 @@
+import re
 from typing import Any, Generic, TypeVar
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 T = TypeVar("T")
+
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def validate_email(value: str) -> str:
+    value = value.strip().lower()
+    if not EMAIL_RE.match(value):
+        raise ValueError("Некорректный email")
+    return value
 
 
 class User(BaseModel):
@@ -20,11 +30,21 @@ class LoginDto(BaseModel):
     email: str
     password: str
 
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, value: str) -> str:
+        return validate_email(value)
+
 
 class RegisterDto(BaseModel):
     name: str | None = None
     email: str
     password: str
+
+    @field_validator("email")
+    @classmethod
+    def check_email(cls, value: str) -> str:
+        return validate_email(value)
 
 
 class RefreshDto(BaseModel):
@@ -69,8 +89,3 @@ class PaginatedResponse(BaseModel, Generic[T]):
     total: int
     page: int
     pageSize: int
-
-
-
-            
-

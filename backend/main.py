@@ -51,9 +51,15 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
 
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    return JSONResponse(
-        status_code=400, content={"message": "Email и пароль обязательны"}
-    )
+    first = exc.errors()[0] if exc.errors() else {}
+    if first.get("type") == "value_error":
+        # наше сообщение из валидатора, например "Некорректный email"
+        message = str(first.get("ctx", {}).get("error", "Некорректные данные запроса"))
+    elif first.get("type") == "missing":
+        message = "Email и пароль обязательны"
+    else:
+        message = "Некорректные данные запроса"
+    return JSONResponse(status_code=400, content={"message": message})
 
 
 # ---------- временное хранилище (данные пропадут при перезапуске) ----------
