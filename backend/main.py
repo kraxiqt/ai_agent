@@ -37,7 +37,7 @@ CORS_ORIGINS = os.getenv(
 ).split(",")
 ACCESS_TTL_SECONDS = int(os.getenv("ACCESS_TTL_SECONDS", "900"))
 REFRESH_TTL_DAYS = int(os.getenv("REFRESH_TTL_DAYS", "30"))
-# JWT_SECRET обязательно задай в .env, иначе после перезапуска все access-токены станут недействительными.
+# JWT_SECRET в .env
 JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
 
@@ -189,7 +189,7 @@ def refresh(data: RefreshDto, db: Session = Depends(get_db)):
         raise HTTPException(status_code=401, detail="Сессия истекла, войдите заново")
     user_id = row.user_id
     expired = row.expires_at < datetime.now(timezone.utc)
-    db.delete(row)  # ротация: старый refresh больше не годится
+    db.delete(row)  
     db.commit()
     if expired:
         raise HTTPException(status_code=401, detail="Сессия истекла, войдите заново")
