@@ -3,36 +3,53 @@ import hmac
 import os
 import secrets
 import uuid
-from dataclasses import dataclass
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
 import jwt
+from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from database import Base, engine, get_db
+from db_models import RefreshTokenDB, UserDB
 from models import (
     AuthResponse,
+    AuthTokens,
     LoginDto,
     RefreshDto,
     RegisterDto,
-    AuthTokens,
     User,
 )
+
+load_dotenv()
 
 # ---------- настройки ----------
 CORS_ORIGINS = os.getenv(
     "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
 ).split(",")
 ACCESS_TTL_SECONDS = int(os.getenv("ACCESS_TTL_SECONDS", "900"))
-# В проде задай JWT_SECRET в .env. Без него ключ генерируется при каждом запуске.
+REFRESH_TTL_DAYS = int(os.getenv("REFRESH_TTL_DAYS", "30"))
+# JWT_SECRET обязательно задай в .env, иначе после перезапуска все access-токены станут недействительными.
 JWT_SECRET = os.getenv("JWT_SECRET") or secrets.token_urlsafe(32)
 JWT_ALGORITHM = "HS256"
 
-app = FastAPI(title="ai_agent backend")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # создаёт таблицы, если их ещё нет (существующие не меняет)
+    Base.metadata.create_all(bind=engine)
+    yield
+
+
+app = FastAPI(title="ai_agent backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,26 +70,12 @@ async def http_error_handler(request: Request, exc: StarletteHTTPException):
 async def validation_error_handler(request: Request, exc: RequestValidationError):
     first = exc.errors()[0] if exc.errors() else {}
     if first.get("type") == "value_error":
-        # наше сообщение из валидатора, например "Некорректный email"
         message = str(first.get("ctx", {}).get("error", "Некорректные данные запроса"))
     elif first.get("type") == "missing":
         message = "Email и пароль обязательны"
     else:
         message = "Некорректные данные запроса"
     return JSONResponse(status_code=400, content={"message": message})
-
-
-# ---------- временное хранилище (данные пропадут при перезапуске) ----------
-@dataclass
-class StoredUser:
-    id: str
-    email: str
-    name: str | None
-    password_hash: str
-
-
-users_by_email: dict[str, StoredUser] = {}
-refresh_token_to_user_id: dict[str, str] = {}
 
 
 # ---------- пароли и токены ----------
@@ -90,6 +93,10 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest.hex(), digest_hex)
 
 
+def hash_refresh_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 def issue_access_token(user_id: str) -> str:
     now = datetime.now(timezone.utc)
     payload = {
@@ -100,13 +107,20 @@ def issue_access_token(user_id: str) -> str:
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def issue_tokens(user_id: str) -> AuthTokens:
+def issue_tokens(db: Session, user_id: str) -> AuthTokens:
     refresh_token = secrets.token_hex(24)
-    refresh_token_to_user_id[refresh_token] = user_id
+    db.add(
+        RefreshTokenDB(
+            token_hash=hash_refresh_token(refresh_token),
+            user_id=user_id,
+            expires_at=datetime.now(timezone.utc) + timedelta(days=REFRESH_TTL_DAYS),
+        )
+    )
+    db.commit()
     return AuthTokens(accessToken=issue_access_token(user_id), refreshToken=refresh_token)
 
 
-def to_public_user(user: StoredUser) -> User:
+def to_public_user(user: UserDB) -> User:
     return User(id=user.id, email=user.email, name=user.name)
 
 
@@ -115,15 +129,17 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> StoredUser:
+    db: Session = Depends(get_db),
+) -> UserDB:
     if credentials is None:
         raise HTTPException(status_code=401, detail="Не авторизован")
-    token = credentials.credentials
     try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM]
+        )
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Не авторизован")
-    user = next((u for u in users_by_email.values() if u.id == payload.get("sub")), None)
+    user = db.get(UserDB, payload.get("sub"))
     if user is None:
         raise HTTPException(status_code=401, detail="Не авторизован")
     return user
@@ -134,37 +150,50 @@ auth = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @auth.post("/register", response_model=AuthResponse)
-def register(data: RegisterDto):
+def register(data: RegisterDto, db: Session = Depends(get_db)):
     if not data.email or not data.password:
         raise HTTPException(status_code=400, detail="Email и пароль обязательны")
-    if data.email in users_by_email:
+    if db.scalar(select(UserDB).where(UserDB.email == data.email)):
         raise HTTPException(
             status_code=409, detail="Пользователь с таким email уже существует"
         )
-    user = StoredUser(
+    user = UserDB(
         id=str(uuid.uuid4()),
         email=data.email,
         name=data.name,
         password_hash=hash_password(data.password),
     )
-    users_by_email[user.email] = user
-    return AuthResponse(user=to_public_user(user), tokens=issue_tokens(user.id))
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:  # одновременная регистрация с той же почтой
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Пользователь с таким email уже существует"
+        )
+    return AuthResponse(user=to_public_user(user), tokens=issue_tokens(db, user.id))
 
 
 @auth.post("/login", response_model=AuthResponse)
-def login(data: LoginDto):
-    user = users_by_email.get(data.email)
+def login(data: LoginDto, db: Session = Depends(get_db)):
+    user = db.scalar(select(UserDB).where(UserDB.email == data.email))
     if user is None or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Неверный email или пароль")
-    return AuthResponse(user=to_public_user(user), tokens=issue_tokens(user.id))
+    return AuthResponse(user=to_public_user(user), tokens=issue_tokens(db, user.id))
 
 
 @auth.post("/refresh", response_model=AuthTokens)
-def refresh(data: RefreshDto):
-    user_id = refresh_token_to_user_id.pop(data.refreshToken, None)  # ротация
-    if user_id is None:
+def refresh(data: RefreshDto, db: Session = Depends(get_db)):
+    row = db.get(RefreshTokenDB, hash_refresh_token(data.refreshToken))
+    if row is None:
         raise HTTPException(status_code=401, detail="Сессия истекла, войдите заново")
-    return issue_tokens(user_id)
+    user_id = row.user_id
+    expired = row.expires_at < datetime.now(timezone.utc)
+    db.delete(row)  # ротация: старый refresh больше не годится
+    db.commit()
+    if expired:
+        raise HTTPException(status_code=401, detail="Сессия истекла, войдите заново")
+    return issue_tokens(db, user_id)
 
 
 @auth.post("/logout", status_code=204)
@@ -173,7 +202,7 @@ def logout():
 
 
 @auth.get("/me", response_model=User)
-def me(user: StoredUser = Depends(get_current_user)):
+def me(user: UserDB = Depends(get_current_user)):
     return to_public_user(user)
 
 
