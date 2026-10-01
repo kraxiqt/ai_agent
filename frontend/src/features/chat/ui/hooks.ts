@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { uuid } from '@/shared/lib/uuid';
 import { selectConversation, selectIsGenerating, selectMessages } from './selectors';
+import { EXAMPLE_REPLIES } from './examples';
 import { useChatStore } from './store';
 import type { Message } from './types';
 
@@ -49,7 +50,9 @@ export function useChat() {
     const myToken = ++activeGenerationToken;
     await wait(400, 900); //имитация "думает" перед ответом словом
 
-    const reply = MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
+    // на кнопки-примеры отвечаем заготовленным Markdown, на остальное ПОКА ЧТО — случайной репликой
+    const reply =
+      EXAMPLE_REPLIES[content] ?? MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
     const words = reply.split(' ');
 
     for (let i = 0; i < words.length; i++) {

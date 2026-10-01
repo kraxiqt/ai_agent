@@ -27,7 +27,7 @@ export function ChatInput({ isGenerating, onSend, onAbort }: ChatInputProps) {
   };
 
   return (
-    <div className="shrink-0 border-t border-ink-200 py-3 dark:border-ink-800">
+    <div className="shrink-0 border-t border-ink-200 pb-8 pt-3 dark:border-ink-800 sm:pb-10">
       <div className="flex items-end gap-2">
         <Textarea
           autoResize

@@ -1,12 +1,9 @@
+import { EXAMPLE_PROMPTS } from './examples';
+
 interface EmptyStateProps {
   onExamplePick?: (text: string) => void;
 }
 
-const EXAMPLES = [
-  'Новости ИБ',
-  'Новости ИТ',
-  'Почему в TS 5 пустых типов данных??',
-];
 
 export function EmptyState({ onExamplePick }: EmptyStateProps) {
   return (
@@ -18,7 +15,7 @@ export function EmptyState({ onExamplePick }: EmptyStateProps) {
         </p>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-center">
-        {EXAMPLES.map((example) => (
+        {EXAMPLE_PROMPTS.map((example) => (
           <button
             key={example}
             type="button"
