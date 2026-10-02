@@ -1,9 +1,9 @@
 import { useCallback } from 'react';
 import { uuid } from '@/shared/lib/uuid';
-import { selectConversation, selectIsGenerating, selectMessages } from './selectors';
+import { selectConversation, selectHistory, selectIsGenerating, selectMessages } from './selectors';
 import { EXAMPLE_REPLIES } from './examples';
-import { useChatStore } from './store';
-import type { Message } from './types';
+import { useChatStore } from '../model/store';
+import type { Message } from '../model/types';
 
 //заглушка реплик под ИИ TODO()
 const MOCK_REPLIES = [
@@ -21,7 +21,10 @@ export function useChat() {
   const conversation = useChatStore(selectConversation);
   const messages = useChatStore(selectMessages);
   const isGenerating = useChatStore(selectIsGenerating);
+  const history = useChatStore(selectHistory);
   const resetConversation = useChatStore((s) => s.startNewConversation);
+  const openConversationInStore = useChatStore((s) => s.openConversation);
+  const deleteConversationInStore = useChatStore((s) => s.deleteConversation);
 
   const sendMessage = useCallback(async (rawContent: string) => {
     const content = rawContent.trim();
@@ -50,7 +53,7 @@ export function useChat() {
     const myToken = ++activeGenerationToken;
     await wait(400, 900); //имитация "думает" перед ответом словом
 
-    // на кнопки-примеры отвечаем заготовленным Markdown, на остальное ПОКА ЧТО — случайной репликой
+    // на кнопки-примеры отвечаем заготовленным Markdown, на остальное — случайной репликой
     const reply =
       EXAMPLE_REPLIES[content] ?? MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
     const words = reply.split(' ');
@@ -77,5 +80,31 @@ export function useChat() {
     resetConversation();
   }, [resetConversation]);
 
-  return { conversation, messages, isGenerating, sendMessage, stopGeneration, startNewConversation };
+  const openConversation = useCallback(
+    (id: string) => {
+      activeGenerationToken += 1;
+      openConversationInStore(id);
+    },
+    [openConversationInStore],
+  );
+
+  const deleteConversation = useCallback(
+    (id: string) => {
+      if (useChatStore.getState().conversation.id === id) activeGenerationToken += 1;
+      deleteConversationInStore(id);
+    },
+    [deleteConversationInStore],
+  );
+
+  return {
+    conversation,
+    messages,
+    history,
+    isGenerating,
+    sendMessage,
+    stopGeneration,
+    startNewConversation,
+    openConversation,
+    deleteConversation,
+  };
 }

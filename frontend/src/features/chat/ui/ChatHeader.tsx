@@ -17,13 +17,20 @@ const MoonIcon = (
   </svg>
 );
 
+const MenuIcon = (
+  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <path d="M4 6h16M4 12h16M4 18h16" />
+  </svg>
+);
+
 interface ChatHeaderProps {
   title: string;
   disabled?: boolean;
   onNewConversation: () => void;
+  onToggleSidebar?: () => void;
 }
 
-export function ChatHeader({ title, disabled = false, onNewConversation }: ChatHeaderProps) {
+export function ChatHeader({ title, disabled = false, onNewConversation, onToggleSidebar }: ChatHeaderProps) {
   const { resolvedTheme, toggleTheme } = useTheme();
   const { user } = useAuth();
 
@@ -31,6 +38,9 @@ export function ChatHeader({ title, disabled = false, onNewConversation }: ChatH
     <div className="flex shrink-0 items-center border-b border-ink-200 px-4 py-3 dark:border-ink-800 sm:px-6">
       <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
+          {onToggleSidebar && (
+            <IconButton size="sm" label="История чатов" icon={MenuIcon} onClick={onToggleSidebar} />
+          )}
           <span className="shrink-0 font-semibold tracking-tight">{env.APP_NAME}</span>
           <span className="hidden truncate text-sm text-ink-400 dark:text-ink-500 sm:inline">{title}</span>
         </div>
