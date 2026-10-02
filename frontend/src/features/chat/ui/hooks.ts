@@ -1,19 +1,29 @@
 import { useCallback } from 'react';
-import { requestStream } from '@/shared/api/baseClient';
+import { apiClient, requestStream } from '@/shared/api/baseClient';
 import { uuid } from '@/shared/lib/uuid';
-import { selectConversation, selectIsGenerating, selectMessages } from './selectors';
-import { useChatStore } from './store';
-import type { Message } from './types';
+import { selectConversation, selectHistory, selectIsGenerating, selectMessages } from './selectors';
+import { useChatStore } from '../model/store';
+import type { Message } from '../model/types';
 
 // общие для ВСЕХ вызовов useChat(), поэтому лежат на уровне модуля
 let activeGenerationToken = 0;
 let activeController: AbortController | null = null;
 
+// гасит текущий ответ: больше не пишется в чат, а запрос к бэкенду обрывается
+function cancelActiveGeneration() {
+  activeGenerationToken += 1;
+  activeController?.abort();
+  activeController = null;
+}
+
 export function useChat() {
   const conversation = useChatStore(selectConversation);
   const messages = useChatStore(selectMessages);
   const isGenerating = useChatStore(selectIsGenerating);
+  const history = useChatStore(selectHistory);
   const resetConversation = useChatStore((s) => s.startNewConversation);
+  const openConversationInStore = useChatStore((s) => s.openConversation);
+  const deleteConversationInStore = useChatStore((s) => s.deleteConversation);
 
   const sendMessage = useCallback(async (rawContent: string) => {
     const content = rawContent.trim();
@@ -90,11 +100,37 @@ export function useChat() {
   }, []);
 
   const startNewConversation = useCallback(() => {
-    activeGenerationToken += 1; // текущий ответ больше не пишется в чат
-    activeController?.abort(); // и запрос к бэкенду обрывается
-    activeController = null;
+    cancelActiveGeneration();
     resetConversation();
   }, [resetConversation]);
 
-  return { conversation, messages, isGenerating, sendMessage, stopGeneration, startNewConversation };
+  const openConversation = useCallback(
+    (id: string) => {
+      cancelActiveGeneration();
+      openConversationInStore(id);
+    },
+    [openConversationInStore],
+  );
+
+  const deleteConversation = useCallback(
+    (id: string) => {
+      if (useChatStore.getState().conversation.id === id) cancelActiveGeneration();
+      deleteConversationInStore(id);
+      // удаляем диалог и на сервере; если его там ещё нет (не было сообщений), ошибку игнорируем
+      apiClient.delete<void>(`chat/conversations/${id}`).catch(() => undefined);
+    },
+    [deleteConversationInStore],
+  );
+
+  return {
+    conversation,
+    messages,
+    history,
+    isGenerating,
+    sendMessage,
+    stopGeneration,
+    startNewConversation,
+    openConversation,
+    deleteConversation,
+  };
 }
