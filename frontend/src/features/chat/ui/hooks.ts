@@ -1,21 +1,13 @@
 import { useCallback } from 'react';
+import { requestStream } from '@/shared/api/baseClient';
 import { uuid } from '@/shared/lib/uuid';
 import { selectConversation, selectIsGenerating, selectMessages } from './selectors';
-import { EXAMPLE_REPLIES } from './examples';
 import { useChatStore } from './store';
 import type { Message } from './types';
 
-//заглушка реплик под ИИ TODO()
-const MOCK_REPLIES = [
-  'Хорошая мысль! Дай мне секунду, чтобы собрать ответ по шагам.',
-  'Понял задачу.',
-];
-
-const wait = (minMs: number, maxMs: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, minMs + Math.random() * (maxMs - minMs)));
-
-//общий для ВСЕХ вызовов useChat(), поэтому лежит на уровне модуля
+// общие для ВСЕХ вызовов useChat(), поэтому лежат на уровне модуля
 let activeGenerationToken = 0;
+let activeController: AbortController | null = null;
 
 export function useChat() {
   const conversation = useChatStore(selectConversation);
@@ -48,32 +40,59 @@ export function useChat() {
     useChatStore.getState().setGenerating(true);
 
     const myToken = ++activeGenerationToken;
-    await wait(400, 900); //имитация "думает" перед ответом словом
+    const controller = new AbortController();
+    activeController = controller;
+    const conversationId = useChatStore.getState().conversation.id;
 
-    // на кнопки-примеры отвечаем заготовленным Markdown, на остальное ПОКА ЧТО — случайной репликой
-    const reply =
-      EXAMPLE_REPLIES[content] ?? MOCK_REPLIES[Math.floor(Math.random() * MOCK_REPLIES.length)];
-    const words = reply.split(' ');
+    try {
+      const response = await requestStream('chat/stream', {
+        method: 'POST',
+        body: { conversationId, content },
+        signal: controller.signal,
+      });
 
-    for (let i = 0; i < words.length; i++) {
-      if (activeGenerationToken !== myToken) return; //диалог сбросили, пока печатали
-      useChatStore.getState().appendMessageContent(assistantId, (i === 0 ? '' : ' ') + words[i]);
-      await wait(30, 90);
-    }
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('Пустой ответ сервера');
+      const decoder = new TextDecoder();
 
-    if (activeGenerationToken === myToken) {
-      useChatStore.getState().updateMessage(assistantId, { status: 'sent' });
-      useChatStore.getState().setGenerating(false);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (activeGenerationToken !== myToken) return; // диалог сбросили, пока шёл ответ
+        const chunk = decoder.decode(value, { stream: true });
+        if (chunk) useChatStore.getState().appendMessageContent(assistantId, chunk);
+      }
+
+      if (activeGenerationToken === myToken) {
+        useChatStore.getState().updateMessage(assistantId, { status: 'sent' });
+      }
+    } catch (error) {
+      if (activeGenerationToken !== myToken) return; // диалог сбросили, ошибка уже не важна
+      if (controller.signal.aborted) {
+        // пользователь нажал «Стоп»: оставляем то, что успело прийти
+        useChatStore.getState().updateMessage(assistantId, { status: 'sent' });
+      } else {
+        useChatStore.getState().updateMessage(assistantId, {
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Не удалось получить ответ',
+        });
+      }
+    } finally {
+      if (activeGenerationToken === myToken) {
+        useChatStore.getState().setGenerating(false);
+        activeController = null;
+      }
     }
   }, []);
 
-  //заглушка запроса TODO()
   const stopGeneration = useCallback(() => {
-    console.log('[chat] stopGeneration — пока заглушка, ответ продолжит генерироваться');
+    activeController?.abort();
   }, []);
 
   const startNewConversation = useCallback(() => {
-    activeGenerationToken += 1; // гасим текущую имитацию, если она ещё идёт
+    activeGenerationToken += 1; // текущий ответ больше не пишется в чат
+    activeController?.abort(); // и запрос к бэкенду обрывается
+    activeController = null;
     resetConversation();
   }, [resetConversation]);
 

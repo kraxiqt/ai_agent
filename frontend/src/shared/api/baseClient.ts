@@ -115,3 +115,49 @@ export const apiClient = {
   delete: <T>(path: string, config?: BodylessConfig) =>
     request<T>(path, { ...config, method: 'DELETE' }),
 };
+
+// ДОБАВИТЬ В КОНЕЦ файла baseClient.ts (ничего существующего не менять).
+// Функция живёт именно там, потому что использует приватные interceptors и unauthorizedHandler.
+//
+// Отличие от request(): не читает тело ответа, а возвращает Response,
+// чтобы вызывающий код читал ответ ИИ по частям. Токен подставляют те же interceptors,
+// а при 401 так же вызывается обновление токена и запрос повторяется один раз.
+export async function requestStream(
+  path: string,
+  config: RequestConfig = {},
+  isRetry = false,
+): Promise<Response> {
+  const { method = 'POST', body, params, headers, signal, skipAuthRefresh = false, ...rest } = config;
+
+  const url = buildUrl(path, params);
+
+  let init: RequestInit = {
+    credentials: 'include',
+    ...rest,
+    method,
+    headers: {
+      Accept: 'text/plain',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal, // сигнал отмены передаём напрямую, чтобы «Стоп» обрывал и чтение потока
+  };
+
+  try {
+    for (const interceptor of interceptors) init = await interceptor(init, url, config);
+
+    const res = await fetch(url, init);
+
+    if (!res.ok) {
+      if (res.status === 401 && !isRetry && !skipAuthRefresh && unauthorizedHandler) {
+        const newToken = await unauthorizedHandler();
+        if (newToken) return requestStream(path, config, true);
+      }
+      throw await parseErrorResponse(res);
+    }
+    return res;
+  } catch (error) {
+    throw toApiError(error);
+  }
+}
