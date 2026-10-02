@@ -14,3 +14,4 @@ export { useChat } from './ui/hooks';
 export { useChatStore } from './model/store';
 export * from './ui/selectors';
 export type { Message, MessageRole, MessageStatus, MessageFeedback, Conversation, StoredChat } from './model/types';
+export { useChatHistorySync } from './ui/hooks';

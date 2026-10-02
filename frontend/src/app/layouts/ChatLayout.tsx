@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { ChatHeader, ChatSidebar, useChat } from '@/features/chat';
+import { useAuthStore } from '@/features/auth';
+import { ChatHeader, ChatSidebar, useChat, useChatHistorySync } from '@/features/chat';
 
 const isDesktop = () => window.matchMedia('(min-width: 768px)').matches;
 
@@ -15,6 +16,10 @@ export function ChatLayout() {
     openConversation,
     deleteConversation,
   } = useChat();
+
+  // история хранится на бэкенде: загружаем её для текущего пользователя
+  const userId = useAuthStore((s) => s.user?.id ?? null);
+  useChatHistorySync(userId);
 
   // на десктопе панель открыта по умолчанию, на телефоне — закрыта
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);

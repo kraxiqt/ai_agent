@@ -11,10 +11,11 @@ load_dotenv()
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://api.groq.com/openai/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
+# "low" / "medium" / "high"; пусто = параметр не отправляется
 LLM_REASONING_EFFORT = os.getenv("LLM_REASONING_EFFORT", "")
 
-MAX_HISTORY_MESSAGES = 10  
-MAX_OUTPUT_TOKENS = 1024
+MAX_HISTORY_MESSAGES = 10  # сколько последних сообщений отправлять модели
+MAX_OUTPUT_TOKENS = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "1500"))  # включает «рассуждения» модели
 
 SYSTEM_PROMPT = (
     "Ты помощник по информационным технологиям и информационной безопасности. "

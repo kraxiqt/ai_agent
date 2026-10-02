@@ -28,6 +28,11 @@ export interface ChatState {
   startNewConversation: () => void;
   openConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
+  // история с бэкенда: список диалогов (сообщения подгружаются при открытии диалога)
+  replaceHistory: (conversations: Conversation[]) => void;
+  setHistoryMessages: (id: string, messages: Message[]) => void;
+  // полная очистка (смена пользователя / выход)
+  resetChat: () => void;
 }
 
 export const useChatStore = create<ChatState>()((set) => ({
@@ -96,4 +101,24 @@ export const useChatStore = create<ChatState>()((set) => ({
       }
       return { history: state.history.filter((c) => c.conversation.id !== id) };
     }),
+
+  // Источник правды — бэкенд: заменяем список диалогов, уже загруженные сообщения сохраняем,
+  // активный диалог в историю не кладём (как и раньше)
+  replaceHistory: (conversations) =>
+    set((state) => {
+      const known = new Map(state.history.map((c) => [c.conversation.id, c]));
+      return {
+        history: conversations
+          .filter((c) => c.id !== state.conversation.id)
+          .map((c) => ({ conversation: c, messages: known.get(c.id)?.messages ?? [] })),
+      };
+    }),
+
+  setHistoryMessages: (id, messages) =>
+    set((state) => ({
+      history: state.history.map((c) => (c.conversation.id === id ? { ...c, messages } : c)),
+    })),
+
+  resetChat: () =>
+    set({ conversation: createConversation(), messages: [], history: [], isGenerating: false }),
 }));
