@@ -18,9 +18,10 @@
 6. [Установка и запуск: Windows](#windows)
 7. [Установка и запуск: macOS](#macos)
 8. [Установка и запуск: Linux](#linux)
-9. [Настройка (.env)](#настройка-env)
-10. [API бэкенда](#api-бэкенда)
-11. [Частые проблемы](#частые-проблемы)
+9. [Запуск через Docker](#запуск-через-docker)
+10. [Настройка (.env)](#настройка-env)
+11. [API бэкенда](#api-бэкенда)
+12. [Частые проблемы](#частые-проблемы)
 
 ---
 
@@ -61,6 +62,8 @@
 ```
 .
 ├── README.md
+├── docker-compose.yml       # запуск всего проекта в Docker (база + бэкенд + фронтенд)
+├── .env                     # только для Docker, создаётся вручную, в git не коммитится
 ├── backend/                 # FastAPI
 │   ├── main.py              # приложение, CORS, обработка ошибок, /api/auth/*
 │   ├── chat.py              # /api/chat/*: потоковый ответ, диалоги, сообщения
@@ -71,7 +74,9 @@
 │   ├── security.py          # хеширование паролей, JWT
 │   ├── database.py          # подключение к БД (DATABASE_URL)
 │   ├── db_models.py         # таблицы: users, refresh_tokens, conversations, messages
-│   └── models.py            # Pydantic-схемы запросов и ответов
+│   ├── models.py            # Pydantic-схемы запросов и ответов
+│   ├── requirements.txt     # Python-зависимости (нужны для Docker-образа)
+│   └── Dockerfile           # образ бэкенда
 └── frontend/                # React + Vite
     ├── src/
     │   ├── app/             # провайдеры, роутер, layouts
@@ -80,6 +85,7 @@
     │   ├── pages/           # страницы
     │   ├── shared/          # api-клиент, UI-кит, утилиты, конфиг
     │   └── widgets/
+    ├── Dockerfile           # образ фронтенда: сборка и раздача на порту 80
     ├── mock-auth-server.mjs # мок-бэкенд только для авторизации (по желанию)
     ├── .env.example
     └── vite.config.ts
@@ -97,6 +103,8 @@
 | Git | любая | получение кода |
 | Ключ OpenAI-совместимого API | — | ответы ИИ. По умолчанию [Groq](https://console.groq.com/keys) |
 
+Если запускаете проект через Docker, из этого списка нужны только Git, Docker и ключ API, остальное ставить не надо: см. раздел [Запуск через Docker](#запуск-через-docker).
+
 Без ключа приложение запустится, регистрация и вход будут работать, а в чате появится сообщение «ИИ не настроен: задай LLM_API_KEY в файле .env».
 
 Установка программ:
@@ -108,6 +116,8 @@
 ---
 
 ## Быстрый старт
+
+> **Не хотите ставить Python, Node.js и PostgreSQL?** Запустите всё одной командой через Docker: [Запуск через Docker](#запуск-через-docker).
 
 Приложение состоит из двух частей, для каждой нужен **свой терминал**.
 
@@ -305,9 +315,129 @@ npm install
 
 ---
 
+## Запуск через Docker
+
+Самый простой способ: одна команда поднимает базу данных, бэкенд и фронтенд. Python, Node.js и PostgreSQL на компьютере ставить не нужно, всё работает в контейнерах.
+
+Состав описан в `docker-compose.yml` в корне проекта:
+
+| Сервис | Образ | Адрес на вашем компьютере | Назначение |
+| --- | --- | --- | --- |
+| `db` | `postgres:16-alpine` | снаружи недоступен | PostgreSQL. Данные лежат в томе `pgdata` и сохраняются между перезапусками |
+| `backend` | собирается из `backend/Dockerfile` (Python 3.13) | <http://localhost:8000> | FastAPI. Стартует после того, как база прошла проверку готовности |
+| `frontend` | собирается из `frontend/Dockerfile` | <http://localhost:5173> | Собранное приложение, внутри контейнера работает на порту 80 |
+
+### Что нужно установить
+
+Git, ключ API модели и Docker с плагином Compose v2:
+
+| Система | Что поставить |
+| --- | --- |
+| Windows 10 / 11 | Docker Desktop: `winget install Docker.DockerDesktop` или установщик с [docker.com](https://www.docker.com/products/docker-desktop/). Нужен WSL 2, установщик предложит его включить. После установки перезагрузите компьютер и запустите Docker Desktop |
+| macOS | Docker Desktop с [docker.com](https://www.docker.com/products/docker-desktop/) (есть версии для Apple Silicon и Intel). После установки запустите приложение |
+| Linux | Docker Engine и плагин Compose по [официальной инструкции](https://docs.docker.com/engine/install/). Чтобы не писать `sudo` перед каждой командой, выполните `sudo usermod -aG docker $USER` и перезайдите в систему |
+
+Проверьте, что всё установлено (на Windows и macOS Docker Desktop должен быть запущен, в нём виден статус «Engine running»):
+
+```bash
+docker --version
+docker compose version
+```
+
+Команда пишется через пробел: `docker compose`, а не `docker-compose`.
+
+### Первый запуск
+
+**1. Получите код**
+
+```bash
+git clone <адрес-репозитория> ai-chat
+cd ai-chat
+```
+
+**2. Создайте файл `.env` в корне проекта** (рядом с `docker-compose.yml`, не в `backend`):
+
+```env
+# обязательно: пароль базы данных (задаётся при первом создании базы)
+POSTGRES_PASSWORD=придумайте_пароль
+
+# обязательно для ответов ИИ
+LLM_API_KEY=ваш_ключ
+
+# рекомендуется: фиксированный секрет для подписи токенов
+JWT_SECRET=длинная_случайная_строка
+```
+
+Создать файл можно так: на Windows `notepad .env` (PowerShell), на macOS и Linux `nano .env`. Остальные переменные бэкенда из раздела [Настройка](#настройка-env) (`LLM_MODEL`, `LLM_BASE_URL` и другие) можно добавлять в этот же файл.
+
+Пароль и секрет удобно сгенерировать без установленного Python, через Docker (команда выведет случайную строку, запустите её дважды, для пароля и для секрета):
+
+```bash
+docker run --rm python:3.13-slim python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+> **Требования к паролю базы.** Он подставляется в строку подключения, поэтому используйте только буквы, цифры, `-` и `_`. Символы `@ : / # ? %` ломают адрес подключения, а `$` в `.env` Docker Compose воспринимает как переменную.
+
+**3. Соберите и запустите**
+
+```bash
+docker compose up -d --build
+```
+
+Первая сборка занимает несколько минут: скачиваются образы, ставятся зависимости Python и npm. Флаг `-d` запускает контейнеры в фоне.
+
+**4. Проверьте**
+
+```bash
+docker compose ps
+```
+
+Все три сервиса должны быть в состоянии `running`, а у `db` в статусе должно быть `healthy`. Затем откройте <http://localhost:5173>, зарегистрируйтесь и напишите сообщение. Документация API: <http://localhost:8000/docs>.
+
+### Повседневные команды
+
+Выполняются из корня проекта.
+
+| Что сделать | Команда |
+| --- | --- |
+| Посмотреть логи | `docker compose logs -f backend` (вместо `backend` можно `db` или `frontend`; выход: `Ctrl+C`) |
+| Остановить, не удаляя контейнеры | `docker compose stop` |
+| Запустить снова | `docker compose start` |
+| Остановить и удалить контейнеры (данные базы сохранятся) | `docker compose down` |
+| Удалить всё вместе с базой (пользователи и диалоги пропадут) | `docker compose down -v` |
+| Обновить после `git pull` или правок кода | `docker compose up -d --build` |
+| Применить новые значения из `.env` (ключ ИИ, секрет) | `docker compose up -d --force-recreate backend` |
+| Сделать резервную копию базы | `docker compose exec -T db pg_dump -U postgres ai_agent > backup.sql` |
+| Восстановить базу из копии | `docker compose exec -T db psql -U postgres -d ai_agent < backup.sql` |
+
+В Windows PowerShell символы `>` и `<` для резервных копий работают некорректно (файл получится в другой кодировке, а `<` не поддерживается). Запускайте эти две команды через `cmd`, например: `cmd /c "docker compose exec -T db pg_dump -U postgres ai_agent > backup.sql"`.
+
+### Что нужно знать
+
+- **Один `.env` в корне.** В Docker используется он, а не `backend/.env`. Переменные `DATABASE_URL` и `CORS_ORIGINS` из файла `.env` игнорируются: они заданы прямо в `docker-compose.yml` (база там называется `db`, а не `localhost`, а драйвер подключения `postgresql+psycopg`).
+- **Пароль базы действует с первого запуска.** Он записывается в базу при создании тома `pgdata`. Если потом изменить `POSTGRES_PASSWORD`, бэкенд перестанет подключаться (в логах `password authentication failed`). Верните прежний пароль или удалите том командой `docker compose down -v`, но тогда данные пропадут.
+- **Адрес бэкенда зашит во фронтенд при сборке.** Он задаётся аргументом `VITE_API_URL` в `docker-compose.yml`. Если его менять, нужна пересборка: `docker compose up -d --build`.
+- **Секреты.** Файл `.env` содержит пароль и ключ API, не добавляйте его в git.
+- **Для разработчиков.** В `backend/requirements.txt` должен быть драйвер `psycopg[binary]` (в docker-compose используется `postgresql+psycopg`, в отличие от локального запуска, где в инструкциях выше стоит `psycopg2-binary`). Чтобы в образ не попали виртуальное окружение и локальные секреты, создайте `backend/.dockerignore` со строками `.venv`, `__pycache__` и `.env`.
+
+### Открытие с другого устройства или на сервере
+
+По умолчанию всё рассчитано на браузер на том же компьютере, где запущен Docker. Чтобы открыть приложение с другого устройства (например, по адресу `192.168.1.15` или по домену), в `docker-compose.yml` нужно заменить адрес:
+
+1. В сервисе `frontend` в `args`: `VITE_API_URL: http://192.168.1.15:8000/api`.
+2. В сервисе `backend` в `environment`: `CORS_ORIGINS: http://localhost:5173,http://192.168.1.15:5173`.
+3. Пересоберите: `docker compose up -d --build`.
+4. Разрешите входящие подключения на порты 5173 и 8000 в брандмауэре.
+
+Для публикации в интернет поставьте перед приложением обратный прокси с HTTPS (nginx, Caddy и подобные) и не оставляйте порт базы открытым.
+
+---
+
 ## Настройка (.env)
 
 ### Бэкенд: `backend/.env`
+
+Этот файл нужен при локальном запуске без Docker. В Docker используется `.env` в корне проекта, см. [Запуск через Docker](#запуск-через-docker).
 
 Минимальный рабочий пример:
 
@@ -413,4 +543,12 @@ cp .env.example .env.local        # Windows PowerShell: Copy-Item .env.example .
 | Порт 8000 занят, но вы ничего не запускали | Возможно, остался запущенным `node mock-auth-server.mjs`. Он использует тот же порт |
 | `npm install` падает | Проверьте версию Node.js (`node -v`, нужна 18 или новее) |
 | Новости пустые или «временно недоступны» | Ленты не отвечают из вашей сети. Запустите `python check_feeds.py` и проверьте доступ в интернет |
+| Docker: `required variable POSTGRES_PASSWORD is missing a value` | В корне проекта (рядом с `docker-compose.yml`) нет файла `.env` или в нём не задан `POSTGRES_PASSWORD` |
+| Docker: `Cannot connect to the Docker daemon` или `failed to connect to the docker API` | Docker не запущен. Windows и macOS: откройте Docker Desktop и дождитесь «Engine running». Linux: `sudo systemctl start docker` |
+| Docker (Linux): `permission denied while trying to connect to the Docker daemon socket` | Пользователь не в группе `docker`: `sudo usermod -aG docker $USER`, затем выйдите из системы и войдите снова. Или пишите `sudo` перед командами |
+| Docker: `docker: 'compose' is not a docker command` | Нет плагина Compose v2. Обновите Docker или установите `docker-compose-plugin` |
+| Docker: `port is already allocated` или `address already in use` для 8000 / 5173 | Порт занят другой программой (см. строку про занятый порт выше) или остался локальный запуск. Остановите его, либо поменяйте левое число в `ports` (например, `"8001:8000"`) и тогда обновите `VITE_API_URL` и `CORS_ORIGINS` |
+| Docker: бэкенд перезапускается, в логах `password authentication failed` | `POSTGRES_PASSWORD` изменили после первого запуска. Верните старый пароль или выполните `docker compose down -v` (данные базы удалятся) |
+| Docker: страница открывается, но ошибка CORS или `Failed to fetch` | Адрес в браузере не совпадает с `CORS_ORIGINS`, либо `VITE_API_URL` указывает не туда. После правки `docker-compose.yml` выполните `docker compose up -d --build` |
+| Docker (Windows): `WSL 2 installation is incomplete` или Docker Desktop не стартует | Включите виртуализацию в BIOS, затем выполните в PowerShell от администратора `wsl --install` (или `wsl --update`) и перезагрузите компьютер |
 
