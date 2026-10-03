@@ -90,7 +90,10 @@ def stream_chat(
         history = [{"role": r.role, "content": r.content} for r in reversed(rows)]
     history.append({"role": "user", "content": data.content})
 
-    news_context = build_news_context(data.content)
+    # Первый кусок берём до ответа клиенту: так ошибки провайдера (лимит, ключ)
+    # вернутся как обычный HTTP-ответ с {"message": ...}, и ничего не сохранится.
+    # если пользователь спрашивает про новости, добавляем реальные новости из RSS
+    news_context = build_news_context(data.content, history)
     stream = stream_llm(history, extra_system=news_context)
     try:
         first = next(stream)
