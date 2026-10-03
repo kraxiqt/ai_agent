@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+PyJWT
+SQLAlchemy
+psycopg[binary]
+python-dotenv
+openai
+feedparser
+httpx
