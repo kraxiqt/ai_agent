@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_agent
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Добавь POSTGRES_PASSWORD в файл .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data   # данные базы сохраняются между перезапусками
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env                         # JWT_SECRET, LLM_API_KEY и остальное
+    environment:
+      # внутри Docker база называется db, а не localhost
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD}@db:5432/ai_agent
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    depends_on:
+      db:
+        condition: service_healthy         # бэкенд стартует, когда база готова
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # адрес бэкенда зашивается во фронт при сборке (его открывает браузер, а не контейнер)
+        VITE_API_URL: http://localhost:8000/api
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
