@@ -1,4 +1,4 @@
-# AI Chat — frontend
+# AI_agent— frontend
 
 React + TypeScript + Vite + Tailwind. Архитектура Clean + vite (ст. генерация)
 
